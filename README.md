@@ -105,7 +105,7 @@ The cache is automatically managed, but you can manually trigger a sync by:
 
 2. Clone the repository:
    ```bash
-   git clone https://github.com/eliweaver732/fusionpbx-app-bulkvs.git
+   git clone https://github.com/rabbidiesel/fusionpbx-app-bulkvs.git
    ```
 
 3. Rename the directory:

@@ -75,9 +75,10 @@ class bulkvs_api {
 	 * @param string $method HTTP method (GET, POST, PUT, DELETE)
 	 * @param string $endpoint API endpoint
 	 * @param array $data Request data (for POST/PUT)
+	 * @param bool $return_empty_on_404 If true, return empty array on 404 instead of throwing exception
 	 * @return array Response data
 	 */
-	private function request($method, $endpoint, $data = null) {
+	private function request($method, $endpoint, $data = null, $return_empty_on_404 = false) {
 		$url = rtrim($this->api_url, '/') . '/' . ltrim($endpoint, '/');
 
 		$ch = curl_init();
@@ -137,6 +138,11 @@ class bulkvs_api {
 
 		if ($error) {
 			throw new Exception("BulkVS API Error: " . $error);
+		}
+
+		// Handle 404 responses - return empty array if configured to do so
+		if ($http_code == 404 && $return_empty_on_404) {
+			return [];
 		}
 
 		// Handle empty responses (some endpoints may return empty body on success)
@@ -236,7 +242,7 @@ class bulkvs_api {
 	 * Search for available numbers
 	 * @param string $npa Area code (3 digits)
 	 * @param string $nxx Exchange code (3 digits, used with npa for 6-digit search)
-	 * @return array Array of available numbers
+	 * @return array Array of available numbers (empty array if none found)
 	 */
 	public function searchNumbers($npa = null, $nxx = null) {
 		$params = [];
@@ -249,7 +255,8 @@ class bulkvs_api {
 		if (empty($params)) {
 			throw new Exception("NPA must be provided");
 		}
-		return $this->request('GET', '/orderTn', $params);
+		// Pass true for return_empty_on_404 - no available numbers returns 404
+		return $this->request('GET', '/orderTn', $params, true);
 	}
 
 	/**
@@ -372,4 +379,3 @@ class bulkvs_api {
 }
 
 ?>
-

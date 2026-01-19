@@ -276,20 +276,17 @@ class bulkvs_cache {
 					$tn_details = $number['TN Details'];
 					$activation_date_raw = $tn_details['Activation Date'] ?? $tn_details['activation_date'] ?? '';
 					
-					// Normalize activation_date - fix malformed dates like "2025-12-01 01 08:00" -> "2025-12-01 01:08:00"
+					// Normalize activation_date - fix malformed dates
 					if (!empty($activation_date_raw)) {
-						// Fix common malformed date patterns: "YYYY-MM-DD HH MM:SS" -> "YYYY-MM-DD HH:MM:SS"
 						$activation_date = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2}:\d{2})/', '$1 $2:$3', $activation_date_raw);
-						// Also handle "YYYY-MM-DD HH MM SS" -> "YYYY-MM-DD HH:MM:SS"
 						$activation_date = preg_replace('/(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s+(\d{2})\s+(\d{2})/', '$1 $2:$3:$4', $activation_date);
 						
-						// Validate the date format - if still invalid, set to null
 						try {
 							$date_obj = new DateTime($activation_date);
 							$activation_date = $date_obj->format('Y-m-d H:i:s');
 						} catch (Exception $date_e) {
 							error_log("BulkVS: Invalid activation_date format for TN $tn: '$activation_date_raw'");
-							$activation_date = ''; // Set to empty string if invalid
+							$activation_date = '';
 						}
 					}
 					
@@ -301,7 +298,6 @@ class bulkvs_cache {
 				$mms = false;
 				if (isset($number['Messaging']) && is_array($number['Messaging'])) {
 					$messaging = $number['Messaging'];
-					// Ensure boolean values - convert empty strings to false
 					if (isset($messaging['Sms'])) {
 						$sms_val = $messaging['Sms'];
 						$sms = ($sms_val === true || $sms_val === 'true' || $sms_val === 1 || $sms_val === '1') ? true : false;
@@ -315,9 +311,8 @@ class bulkvs_cache {
 				// Prepare data for insert/update
 				$data_json = json_encode($number);
 				
-				// Check if record exists - use SELECT then INSERT/UPDATE instead of ON CONFLICT
-				// This works even if the unique constraint wasn't created properly
-				$check_sql = "SELECT cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
+				// Check if record exists
+				$check_sql = "SELECT bulkvs_numbers_cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
 				if (!empty($trunk_group)) {
 					$check_sql .= " AND trunk_group = :trunk_group";
 				}
@@ -328,23 +323,19 @@ class bulkvs_cache {
 				
 				$existing = $this->database->select($check_sql, $check_params, 'row');
 				
-				// Ensure booleans are actual PHP booleans (not empty strings) for PostgreSQL
-				// FusionPBX's database class may convert booleans to strings, so we need to be explicit
 				$sms_bool = ($sms === true || $sms === 'true' || $sms === 1 || $sms === '1') ? true : false;
 				$mms_bool = ($mms === true || $mms === 'true' || $mms === 1 || $mms === '1') ? true : false;
 				
 				if (empty($existing)) {
 					$new_count++;
-					// INSERT new record - use explicit boolean casting in SQL
 					$sql = "INSERT INTO v_bulkvs_numbers_cache ";
-					$sql .= "(cache_uuid, tn, status, activation_date, rate_center, tier, lidb, reference_id, ";
+					$sql .= "(bulkvs_numbers_cache_uuid, tn, status, activation_date, rate_center, tier, lidb, reference_id, ";
 					$sql .= "sms, mms, portout_pin, trunk_group, data_json, last_updated, created) ";
 					$sql .= "VALUES ";
 					$sql .= "(gen_random_uuid(), :tn, :status, :activation_date, :rate_center, :tier, :lidb, :reference_id, ";
 					$sql .= "CAST(:sms AS boolean), CAST(:mms AS boolean), :portout_pin, :trunk_group, :data_json::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ";
 				} else {
 					$updated_count++;
-					// UPDATE existing record - use explicit boolean casting in SQL
 					$sql = "UPDATE v_bulkvs_numbers_cache SET ";
 					$sql .= "status = :status, ";
 					$sql .= "activation_date = :activation_date, ";
@@ -364,8 +355,6 @@ class bulkvs_cache {
 					}
 				}
 				
-				// Convert booleans to integers (1/0) that PostgreSQL can cast to boolean
-				// This handles the case where FusionPBX's database class converts booleans to empty strings
 				$sms_param = $sms_bool ? 1 : 0;
 				$mms_param = $mms_bool ? 1 : 0;
 				
@@ -387,15 +376,7 @@ class bulkvs_cache {
 				try {
 					$result = $this->database->execute($sql, $parameters);
 					
-					if ($result === false && property_exists($this->database, 'message') && is_array($this->database->message)) {
-						$error_msg = $this->database->message['message'] ?? 'Unknown error';
-						if ($failed_count < 3) {
-							error_log("BulkVS: Database execute failed for TN $tn: $error_msg");
-						}
-					}
-					
-					// Verify the insert actually worked by checking if the record exists
-					$verify_sql = "SELECT cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
+					$verify_sql = "SELECT bulkvs_numbers_cache_uuid FROM v_bulkvs_numbers_cache WHERE tn = :tn";
 					if (!empty($trunk_group)) {
 						$verify_sql .= " AND trunk_group = :trunk_group";
 					}
@@ -408,9 +389,6 @@ class bulkvs_cache {
 					
 					if (empty($verify_result)) {
 						$failed_count++;
-						if ($failed_count <= 3) {
-							error_log("BulkVS: Insert failed for TN $tn - record not found after insert");
-						}
 						continue;
 					}
 					
@@ -418,21 +396,17 @@ class bulkvs_cache {
 				} catch (Exception $e) {
 					$failed_count++;
 					error_log("BulkVS cache insert error for TN $tn: " . $e->getMessage());
-					// Don't throw - continue with other records
 				}
 			}
 			
 			// Remove numbers from cache that are no longer in API response
-			// This ensures the cache is an exact match of what the API returns
 			if (!empty($trunk_group)) {
-				// Build list of TNs from API response
 				$tn_list = array_map(function($n) {
 					return $n['TN'] ?? $n['tn'] ?? $n['telephoneNumber'] ?? '';
 				}, $numbers);
 				$tn_list = array_filter($tn_list);
 				
 				if (!empty($tn_list)) {
-					// Delete numbers in this trunk_group that are not in the API response
 					$placeholders = [];
 					$delete_params = ['trunk_group' => $trunk_group];
 					foreach ($tn_list as $index => $tn) {
@@ -442,66 +416,12 @@ class bulkvs_cache {
 					
 					$sql_delete = "DELETE FROM v_bulkvs_numbers_cache ";
 					$sql_delete .= "WHERE trunk_group = :trunk_group ";
-					if (!empty($placeholders)) {
-						$sql_delete .= "AND tn NOT IN (" . implode(', ', $placeholders) . ") ";
-					} else {
-						// If API returned no numbers, delete all for this trunk_group
-						$sql_delete .= "AND tn IS NOT NULL ";
-					}
+					$sql_delete .= "AND tn NOT IN (" . implode(', ', $placeholders) . ") ";
 					
 					try {
-						$delete_result = $this->database->execute($sql_delete, $delete_params);
-						// Log deletion for debugging (only if significant number deleted)
-						$deleted_count = is_array($delete_result) ? count($delete_result) : 0;
-						if ($deleted_count > 0) {
-							error_log("BulkVS: Deleted $deleted_count numbers no longer in API response for trunk_group: $trunk_group");
-						}
+						$this->database->execute($sql_delete, $delete_params);
 					} catch (Exception $delete_e) {
 						error_log("BulkVS: Error deleting old numbers: " . $delete_e->getMessage());
-					}
-				} else {
-					// API returned no numbers - delete all for this trunk_group
-					try {
-						$sql_delete_all = "DELETE FROM v_bulkvs_numbers_cache WHERE trunk_group = :trunk_group";
-						$this->database->execute($sql_delete_all, ['trunk_group' => $trunk_group]);
-					} catch (Exception $delete_e) {
-						error_log("BulkVS: Error deleting all numbers for trunk_group: " . $delete_e->getMessage());
-					}
-				}
-			} else {
-				// No trunk_group filter - delete numbers not in API response across all trunk groups
-				$tn_list = array_map(function($n) {
-					return $n['TN'] ?? $n['tn'] ?? $n['telephoneNumber'] ?? '';
-				}, $numbers);
-				$tn_list = array_filter($tn_list);
-				
-				if (!empty($tn_list)) {
-					$placeholders = [];
-					$delete_params = [];
-					foreach ($tn_list as $index => $tn) {
-						$placeholders[] = ':tn_' . $index;
-						$delete_params['tn_' . $index] = $tn;
-					}
-					
-					$sql_delete = "DELETE FROM v_bulkvs_numbers_cache ";
-					$sql_delete .= "WHERE tn NOT IN (" . implode(', ', $placeholders) . ") ";
-					
-					try {
-						$delete_result = $this->database->execute($sql_delete, $delete_params);
-						$deleted_count = is_array($delete_result) ? count($delete_result) : 0;
-						if ($deleted_count > 0) {
-							error_log("BulkVS: Deleted $deleted_count numbers no longer in API response");
-						}
-					} catch (Exception $delete_e) {
-						error_log("BulkVS: Error deleting old numbers: " . $delete_e->getMessage());
-					}
-				} else {
-					// API returned no numbers - delete all
-					try {
-						$sql_delete_all = "DELETE FROM v_bulkvs_numbers_cache";
-						$this->database->execute($sql_delete_all, null);
-					} catch (Exception $delete_e) {
-						error_log("BulkVS: Error deleting all numbers: " . $delete_e->getMessage());
 					}
 				}
 			}
@@ -520,7 +440,7 @@ class bulkvs_cache {
 			$total_records = count($numbers);
 			$last_record_count = $current_count;
 			
-			// Update sync status - MUST reset sync_in_progress
+			// Update sync status
 			try {
 				$this->updateSyncStatus('numbers', [
 					'sync_in_progress' => false,
@@ -530,17 +450,8 @@ class bulkvs_cache {
 					'current_record_count' => $actual_count,
 					'error_message' => null
 				]);
-				
-				// Verify it was actually updated
-				$verify_status = $this->getSyncStatus('numbers');
-				if ($verify_status && isset($verify_status['sync_in_progress']) && $verify_status['sync_in_progress']) {
-					// Force reset one more time
-					$sql_force = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false WHERE sync_type = 'numbers'";
-					$this->database->execute($sql_force, null);
-				}
 			} catch (Exception $status_error) {
 				error_log("BulkVS: Error updating sync status: " . $status_error->getMessage());
-				// Try to force reset the flag
 				try {
 					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'success' WHERE sync_type = 'numbers'";
 					$this->database->execute($sql_reset, null);
@@ -552,14 +463,13 @@ class bulkvs_cache {
 			return [
 				'success' => true,
 				'new_records' => $actual_count - $last_record_count,
-				'total_records' => $actual_count, // Return actual DB count
+				'total_records' => $actual_count,
 				'updated_count' => $inserted_count,
 				'failed_count' => $failed_count,
 				'api_count' => $total_records
 			];
 			
 		} catch (Exception $e) {
-			// Update sync status with error - MUST reset sync_in_progress
 			error_log("BulkVS: Sync error: " . $e->getMessage());
 			try {
 				$this->updateSyncStatus('numbers', [
@@ -569,8 +479,6 @@ class bulkvs_cache {
 					'error_message' => $e->getMessage()
 				]);
 			} catch (Exception $status_error) {
-				error_log("BulkVS: Error updating sync status: " . $status_error->getMessage());
-				// Try to force reset the flag
 				try {
 					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'error' WHERE sync_type = 'numbers'";
 					$this->database->execute($sql_reset, null);
@@ -593,13 +501,11 @@ class bulkvs_cache {
 	 * @return array Sync result with success status and record counts
 	 */
 	public function syncE911() {
-		// Check if sync is already in progress (but allow if it's been more than 2 minutes - might be stale)
 		$sync_status = $this->getSyncStatus('e911');
 		if ($sync_status && isset($sync_status['sync_in_progress']) && $sync_status['sync_in_progress']) {
-			// Check if sync is stale (more than 2 minutes old)
 			$last_sync_start = isset($sync_status['last_sync_start']) ? strtotime($sync_status['last_sync_start']) : 0;
 			$now = time();
-			if (($now - $last_sync_start) < 120) { // 2 minutes
+			if (($now - $last_sync_start) < 120) {
 				return [
 					'success' => false,
 					'message' => 'Sync already in progress',
@@ -607,7 +513,6 @@ class bulkvs_cache {
 					'total_records' => $sync_status['current_record_count'] ?? 0
 				];
 			} else {
-				// Stale sync - reset it
 				try {
 					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false WHERE sync_type = 'e911'";
 					$this->database->execute($sql_reset, null);
@@ -617,7 +522,6 @@ class bulkvs_cache {
 			}
 		}
 		
-		// Mark sync as in progress
 		$this->updateSyncStatus('e911', [
 			'sync_in_progress' => true,
 			'sync_status' => 'in_progress',
@@ -628,10 +532,8 @@ class bulkvs_cache {
 			require_once __DIR__ . "/bulkvs_api.php";
 			$bulkvs_api = new bulkvs_api($this->settings);
 			
-			// Fetch from API
 			$api_response = $bulkvs_api->getE911Records();
 			
-			// Handle API response format
 			if (isset($api_response['data']) && is_array($api_response['data'])) {
 				$records = $api_response['data'];
 			} elseif (is_array($api_response)) {
@@ -640,14 +542,12 @@ class bulkvs_cache {
 				$records = [];
 			}
 			
-			// Filter out empty/invalid entries
 			$records = array_filter($records, function($record) {
 				$tn = $record['TN'] ?? $record['tn'] ?? '';
 				return !empty($tn);
 			});
 			$records = array_values($records);
 			
-			// Get current count from cache
 			$sql_count = "SELECT COUNT(*) as count FROM v_bulkvs_e911_cache ";
 			$current_count_result = $this->database->select($sql_count, null, 'row');
 			$current_count = isset($current_count_result['count']) ? (int)$current_count_result['count'] : 0;
@@ -655,14 +555,12 @@ class bulkvs_cache {
 			$new_count = 0;
 			$updated_count = 0;
 			
-			// Upsert each record
 			foreach ($records as $record) {
 				$tn = $record['TN'] ?? $record['tn'] ?? '';
 				if (empty($tn)) {
 					continue;
 				}
 				
-				// Extract fields
 				$caller_name = $record['Caller Name'] ?? $record['callerName'] ?? '';
 				$address_line1 = $record['Address Line 1'] ?? $record['addressLine1'] ?? '';
 				$address_line2 = $record['Address Line 2'] ?? $record['addressLine2'] ?? '';
@@ -676,8 +574,7 @@ class bulkvs_cache {
 					$sms_array = $record['Sms'];
 				}
 				
-				// Check if record exists
-				$sql_check = "SELECT cache_uuid FROM v_bulkvs_e911_cache WHERE tn = :tn ";
+				$sql_check = "SELECT bulkvs_e911_cache_uuid FROM v_bulkvs_e911_cache WHERE tn = :tn ";
 				$existing = $this->database->select($sql_check, ['tn' => $tn], 'row');
 				
 				if (empty($existing)) {
@@ -686,21 +583,17 @@ class bulkvs_cache {
 					$updated_count++;
 				}
 				
-				// Prepare data for insert/update
 				$data_json = json_encode($record);
 				$sms_json = json_encode($sms_array);
 				
-				// Use SELECT then INSERT/UPDATE instead of ON CONFLICT
 				if (empty($existing)) {
-					// INSERT new record
 					$sql = "INSERT INTO v_bulkvs_e911_cache ";
-					$sql .= "(cache_uuid, tn, caller_name, address_line1, address_line2, city, state, zip, ";
+					$sql .= "(bulkvs_e911_cache_uuid, tn, caller_name, address_line1, address_line2, city, state, zip, ";
 					$sql .= "address_id, sms, data_json, last_updated, created) ";
 					$sql .= "VALUES ";
 					$sql .= "(gen_random_uuid(), :tn, :caller_name, :address_line1, :address_line2, :city, :state, :zip, ";
 					$sql .= ":address_id, :sms::jsonb, :data_json::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) ";
 				} else {
-					// UPDATE existing record
 					$sql = "UPDATE v_bulkvs_e911_cache SET ";
 					$sql .= "caller_name = :caller_name, ";
 					$sql .= "address_line1 = :address_line1, ";
@@ -732,12 +625,10 @@ class bulkvs_cache {
 					$this->database->execute($sql, $parameters);
 				} catch (Exception $e) {
 					error_log("BulkVS E911 cache insert error for TN $tn: " . $e->getMessage());
-					// Don't throw - continue with other records
 				}
 			}
 			
 			// Remove records from cache that are no longer in API response
-			// This ensures the cache is an exact match of what the API returns
 			$tn_list = array_map(function($r) {
 				return $r['TN'] ?? $r['tn'] ?? '';
 			}, $records);
@@ -755,28 +646,15 @@ class bulkvs_cache {
 				$sql_delete .= "WHERE tn NOT IN (" . implode(', ', $placeholders) . ") ";
 				
 				try {
-					$delete_result = $this->database->execute($sql_delete, $delete_params);
-					$deleted_count = is_array($delete_result) ? count($delete_result) : 0;
-					if ($deleted_count > 0) {
-						error_log("BulkVS E911: Deleted $deleted_count records no longer in API response");
-					}
+					$this->database->execute($sql_delete, $delete_params);
 				} catch (Exception $delete_e) {
 					error_log("BulkVS E911: Error deleting old records: " . $delete_e->getMessage());
-				}
-			} else {
-				// API returned no records - delete all
-				try {
-					$sql_delete_all = "DELETE FROM v_bulkvs_e911_cache";
-					$this->database->execute($sql_delete_all, null);
-				} catch (Exception $delete_e) {
-					error_log("BulkVS E911: Error deleting all records: " . $delete_e->getMessage());
 				}
 			}
 			
 			$total_records = count($records);
 			$last_record_count = $current_count;
 			
-			// Update sync status - MUST reset sync_in_progress
 			try {
 				$this->updateSyncStatus('e911', [
 					'sync_in_progress' => false,
@@ -788,7 +666,6 @@ class bulkvs_cache {
 				]);
 			} catch (Exception $status_error) {
 				error_log("BulkVS E911: Error updating sync status: " . $status_error->getMessage());
-				// Try to force reset the flag
 				try {
 					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'success' WHERE sync_type = 'e911'";
 					$this->database->execute($sql_reset, null);
@@ -805,7 +682,6 @@ class bulkvs_cache {
 			];
 			
 		} catch (Exception $e) {
-			// Update sync status with error - MUST reset sync_in_progress
 			error_log("BulkVS E911: Sync error: " . $e->getMessage());
 			try {
 				$this->updateSyncStatus('e911', [
@@ -815,8 +691,6 @@ class bulkvs_cache {
 					'error_message' => $e->getMessage()
 				]);
 			} catch (Exception $status_error) {
-				error_log("BulkVS E911: Error updating sync status: " . $status_error->getMessage());
-				// Try to force reset the flag
 				try {
 					$sql_reset = "UPDATE v_bulkvs_sync_status SET sync_in_progress = false, sync_status = 'error' WHERE sync_type = 'e911'";
 					$this->database->execute($sql_reset, null);
@@ -865,7 +739,6 @@ class bulkvs_cache {
 		$current_count = isset($sync_status['current_record_count']) ? (int)$sync_status['current_record_count'] : 0;
 		$last_count = isset($sync_status['last_record_count']) ? (int)$sync_status['last_record_count'] : 0;
 		
-		// Return true if count changed in either direction (new records added or records deleted)
 		return $current_count !== $last_count;
 	}
 
@@ -891,19 +764,16 @@ class bulkvs_cache {
 	 * @param array $data Status data to update
 	 */
 	private function updateSyncStatus($sync_type, $data) {
-		// Check if record exists
 		$existing = $this->getSyncStatus($sync_type);
 		
 		if (empty($existing)) {
-			// Insert new record
 			$sql = "INSERT INTO v_bulkvs_sync_status ";
-			$sql .= "(sync_uuid, sync_type, last_sync_start, last_sync_end, last_record_count, ";
+			$sql .= "(bulkvs_sync_status_uuid, sync_type, last_sync_start, last_sync_end, last_record_count, ";
 			$sql .= "current_record_count, sync_in_progress, sync_status, error_message) ";
 			$sql .= "VALUES ";
 			$sql .= "(gen_random_uuid(), :sync_type, :last_sync_start, :last_sync_end, :last_record_count, ";
 			$sql .= ":current_record_count, CAST(:sync_in_progress AS boolean), :sync_status, :error_message) ";
 			
-			// Convert sync_in_progress to integer (1/0) for PostgreSQL boolean casting
 			$sync_in_progress_val = isset($data['sync_in_progress']) ? $data['sync_in_progress'] : false;
 			$sync_in_progress_int = ($sync_in_progress_val === true || $sync_in_progress_val === 'true' || $sync_in_progress_val === 1 || $sync_in_progress_val === '1') ? 1 : 0;
 			
@@ -925,7 +795,6 @@ class bulkvs_cache {
 				throw $e;
 			}
 		} else {
-			// Update existing record
 			$sql = "UPDATE v_bulkvs_sync_status SET ";
 			$updates = [];
 			$parameters = ['sync_type' => $sync_type];
@@ -947,7 +816,6 @@ class bulkvs_cache {
 				$parameters['current_record_count'] = $data['current_record_count'];
 			}
 			if (isset($data['sync_in_progress'])) {
-				// Convert to integer (1/0) and use CAST in SQL to handle FusionPBX's string conversion
 				$updates[] = "sync_in_progress = CAST(:sync_in_progress AS boolean)";
 				$sync_in_progress_val = $data['sync_in_progress'];
 				$parameters['sync_in_progress'] = ($sync_in_progress_val === true || $sync_in_progress_val === 'true' || $sync_in_progress_val === 1 || $sync_in_progress_val === '1') ? 1 : 0;
@@ -965,26 +833,7 @@ class bulkvs_cache {
 				$sql .= implode(', ', $updates);
 				$sql .= " WHERE sync_type = :sync_type ";
 				try {
-					$update_result = $this->database->execute($sql, $parameters);
-					
-					// Check if update failed
-					if ($update_result === false && property_exists($this->database, 'message') && is_array($this->database->message)) {
-						$error_msg = $this->database->message['message'] ?? 'Unknown error';
-						throw new Exception("Sync status update failed: $error_msg");
-					}
-					
-					// Verify the update worked by reading it back
-					$verify_status = $this->getSyncStatus($sync_type);
-					if ($verify_status && isset($data['sync_in_progress'])) {
-						$expected = $data['sync_in_progress'] ? true : false;
-						$actual = isset($verify_status['sync_in_progress']) ? ($verify_status['sync_in_progress'] ? true : false) : null;
-						if ($actual !== $expected) {
-							// Force reset if mismatch - use CAST with integer
-							$expected_int = $expected ? 1 : 0;
-							$sql_force = "UPDATE v_bulkvs_sync_status SET sync_in_progress = CAST(:sync_in_progress AS boolean) WHERE sync_type = :sync_type";
-							$this->database->execute($sql_force, ['sync_type' => $sync_type, 'sync_in_progress' => $expected_int]);
-						}
-					}
+					$this->database->execute($sql, $parameters);
 				} catch (Exception $e) {
 					error_log("BulkVS: Error executing sync status update: " . $e->getMessage());
 					throw $e;
@@ -1014,9 +863,6 @@ class bulkvs_cache {
 	 */
 	public function updateNumber($tn, $number_data) {
 		// This will be called after editing a number
-		// For now, trigger a full sync or update the specific record
-		// For simplicity, we'll just mark that a sync is needed
-		// In a production system, you might want to update just this record
 	}
 
 	/**
@@ -1035,7 +881,6 @@ class bulkvs_cache {
 	 */
 	public function updateE911($tn, $e911_data) {
 		// This will be called after editing an E911 record
-		// For now, trigger a full sync or update the specific record
 	}
 
 	/**
@@ -1062,4 +907,3 @@ class bulkvs_cache {
 }
 
 ?>
-

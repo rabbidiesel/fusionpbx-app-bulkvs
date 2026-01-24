@@ -63,6 +63,23 @@
 			// Check if delete was successful
 			$status = $result['Status'] ?? $result['status'] ?? '';
 			if (strtoupper($status) === 'SUCCESS' || empty($status)) {
+				// Update destination_type_emergency to 0 in v_destinations
+				// Convert 11-digit TN to 10-digit (remove leading "1")
+				$tn_10 = preg_replace('/^1/', '', $delete_tn);
+				if (strlen($tn_10) == 10) {
+					if (!isset($database) || $database === null) {
+						$database = new database;
+					}
+					$sql = "update v_destinations ";
+					$sql .= "set destination_type_emergency = 0 ";
+					$sql .= "where destination_number = :destination_number ";
+					$sql .= "and destination_type = 'inbound' ";
+					$sql .= "and destination_enabled = 'true' ";
+					$parameters = ['destination_number' => $tn_10];
+					$database->execute($sql, $parameters);
+					unset($sql, $parameters);
+				}
+				
 				// Remove from cache
 				require_once "resources/classes/bulkvs_cache.php";
 				$cache = new bulkvs_cache($database, $settings);

@@ -30,7 +30,7 @@
 	require_once dirname(__DIR__, 2) . "/resources/paging.php";
 
 //check permissions
-	if (!permission_exists('bulkvs_e911') && !permission_exists('bulkvs_e911_server') && !permission_exists('bulkvs_e911_all')) {
+	if (!permission_exists('bulkvs_e911') && !permission_exists('bulkvs_e911_server') && !permission_exists('bulkvs_e911_all') && !permission_exists('bulkvs_e911_domain')) {
 		echo "access denied";
 		exit;
 	}
@@ -91,6 +91,21 @@
 	require_once "resources/classes/bulkvs_cache.php";
 	$cache = new bulkvs_cache($database, $settings);
 
+//get domain filter parameter
+	$domain_filter = $_GET['domain_filter'] ?? '';
+	$show_domain_only = false;
+	
+	// Determine if we should show domain-only based on permissions and domain_filter parameter
+	if (permission_exists('bulkvs_e911_all')) {
+		// User has "all" permission - check domain_filter parameter
+		if ($domain_filter === 'domain') {
+			$show_domain_only = true;
+		}
+	} elseif (permission_exists('bulkvs_e911_domain')) {
+		// User only has domain permission - always show domain-only
+		$show_domain_only = true;
+	}
+
 //get E911 records from cache (fallback to API if cache is empty)
 	$e911_records = [];
 	$error_message = '';
@@ -134,50 +149,82 @@
 		}
 		
 		// Filter E911 records based on permissions
-		// Priority: bulkvs_e911_all > bulkvs_e911_server > bulkvs_e911
-		// bulkvs_e911_all: show all records (no filtering)
+		// Priority: bulkvs_e911_all > bulkvs_e911_server > bulkvs_e911/bulkvs_e911_domain
+		// bulkvs_e911_all: show all records (no filtering) unless domain_filter=domain
 		// bulkvs_e911_server: show only E911s with destinations on this server (any domain)
-		// bulkvs_e911: show only E911s with destinations in current domain
-		if (!permission_exists('bulkvs_e911_all')) {
+		// bulkvs_e911/bulkvs_e911_domain: show only E911s with destinations in current domain
+		if ($show_domain_only || (!permission_exists('bulkvs_e911_all') && !permission_exists('bulkvs_e911_server'))) {
 			if (!isset($database) || $database === null) {
 				$database = new database;
 			}
 			
 			$destination_numbers = [];
 			
-			if (permission_exists('bulkvs_e911_server')) {
-				// Get all destination numbers on this server (any domain)
-				$sql = "select distinct destination_number ";
-				$sql .= "from v_destinations ";
-				$sql .= "where destination_type = 'inbound' ";
-				$sql .= "and destination_enabled = 'true' ";
-				$server_destinations = $database->select($sql, null, 'all');
-				unset($sql);
-				
-				// Build set of 10-digit destination numbers
-				foreach ($server_destinations as $dest) {
-					$dest_number = $dest['destination_number'] ?? '';
-					if (!empty($dest_number)) {
-						$destination_numbers[$dest_number] = true;
+			// Get all destination numbers in current domain
+			$sql = "select distinct destination_number ";
+			$sql .= "from v_destinations ";
+			$sql .= "where domain_uuid = :domain_uuid ";
+			$sql .= "and destination_type = 'inbound' ";
+			$sql .= "and destination_enabled = 'true' ";
+			$parameters['domain_uuid'] = $domain_uuid;
+			$domain_destinations = $database->select($sql, $parameters, 'all');
+			unset($sql, $parameters);
+			
+			// Build set of 10-digit destination numbers
+			foreach ($domain_destinations as $dest) {
+				$dest_number = $dest['destination_number'] ?? '';
+				if (!empty($dest_number)) {
+					$destination_numbers[$dest_number] = true;
+				}
+			}
+			
+			// Filter E911 records to only include those with matching destinations
+			if (!empty($destination_numbers)) {
+				$filtered_e911_records = [];
+				foreach ($e911_records as $e911_record) {
+					$e911_tn = $e911_record['TN'] ?? $e911_record['tn'] ?? '';
+					if (!empty($e911_tn)) {
+						// Convert 11-digit to 10-digit (remove leading "1")
+						$tn_10 = preg_replace('/^1/', '', $e911_tn);
+						if (strlen($tn_10) == 10 && isset($destination_numbers[$tn_10])) {
+							$filtered_e911_records[] = $e911_record;
+						}
 					}
 				}
-			} elseif (permission_exists('bulkvs_e911')) {
-				// Get all destination numbers in current domain
-				$sql = "select distinct destination_number ";
-				$sql .= "from v_destinations ";
-				$sql .= "where domain_uuid = :domain_uuid ";
-				$sql .= "and destination_type = 'inbound' ";
-				$sql .= "and destination_enabled = 'true' ";
-				$parameters['domain_uuid'] = $domain_uuid;
-				$domain_destinations = $database->select($sql, $parameters, 'all');
-				unset($sql, $parameters);
+				$e911_records = $filtered_e911_records;
 				
-				// Build set of 10-digit destination numbers
-				foreach ($domain_destinations as $dest) {
-					$dest_number = $dest['destination_number'] ?? '';
-					if (!empty($dest_number)) {
-						$destination_numbers[$dest_number] = true;
+				// Rebuild e911_map with filtered records
+				$e911_map = [];
+				foreach ($e911_records as $e911_record) {
+					$e911_tn = $e911_record['TN'] ?? $e911_record['tn'] ?? '';
+					if (!empty($e911_tn)) {
+						$e911_map[$e911_tn] = $e911_record;
 					}
+				}
+			} else {
+				// No destinations found, clear records
+				$e911_records = [];
+				$e911_map = [];
+			}
+		} elseif (!permission_exists('bulkvs_e911_all') && permission_exists('bulkvs_e911_server')) {
+			// Get all destination numbers on this server (any domain)
+			if (!isset($database) || $database === null) {
+				$database = new database;
+			}
+			
+			$destination_numbers = [];
+			$sql = "select distinct destination_number ";
+			$sql .= "from v_destinations ";
+			$sql .= "where destination_type = 'inbound' ";
+			$sql .= "and destination_enabled = 'true' ";
+			$server_destinations = $database->select($sql, null, 'all');
+			unset($sql);
+			
+			// Build set of 10-digit destination numbers
+			foreach ($server_destinations as $dest) {
+				$dest_number = $dest['destination_number'] ?? '';
+				if (!empty($dest_number)) {
+					$destination_numbers[$dest_number] = true;
 				}
 			}
 			
@@ -428,8 +475,11 @@
 	$num_rows = count($e911_records);
 	$rows_per_page = $settings->get('domain', 'paging', 50);
 	$param = "";
+	if ($show_domain_only) {
+		$param = "&domain_filter=domain";
+	}
 	if (!empty($filter)) {
-		$param = "&filter=".urlencode($filter);
+		$param .= "&filter=".urlencode($filter);
 	}
 	if (!empty($order_by)) {
 		$param .= "&order_by=".urlencode($order_by);
@@ -437,10 +487,13 @@
 	if (!empty($order)) {
 		$param .= "&order=".urlencode($order);
 	}
-	// Build param for th_order_by (only filter, order_by/order will be added by th_order_by)
+	// Build param for th_order_by (only filter and domain_filter, order_by/order will be added by th_order_by)
 	$th_order_by_param = "";
+	if ($show_domain_only) {
+		$th_order_by_param = "&domain_filter=domain";
+	}
 	if (!empty($filter)) {
-		$th_order_by_param = "&filter=".urlencode($filter);
+		$th_order_by_param .= "&filter=".urlencode($filter);
 	}
 	if (!empty($_GET['page'])) {
 		$page = $_GET['page'];
@@ -495,12 +548,45 @@
 	if (permission_exists('bulkvs_edit')) {
 		echo button::create(['type'=>'button','label'=>'Add E911','icon'=>'plus','link'=>'bulkvs_e911_edit.php']);
 	}
+	// Domain/All toggle button (only visible when bulkvs_e911_all permission exists)
+	if (permission_exists('bulkvs_e911_all')) {
+		$toggle_url = 'bulkvs_e911.php';
+		$toggle_params = [];
+		if (!empty($filter)) {
+			$toggle_params[] = 'filter=' . urlencode($filter);
+		}
+		if (!empty($order_by)) {
+			$toggle_params[] = 'order_by=' . urlencode($order_by);
+		}
+		if (!empty($order)) {
+			$toggle_params[] = 'order=' . urlencode($order);
+		}
+		if ($show_domain_only) {
+			// Currently showing domain-only, so toggle to show all
+			$toggle_label = $text['button-show-all'];
+		} else {
+			// Currently showing all, so toggle to show domain-only
+			$toggle_params[] = 'domain_filter=domain';
+			$toggle_label = $text['button-show-domain'];
+		}
+		if (!empty($toggle_params)) {
+			$toggle_url .= '?' . implode('&', $toggle_params);
+		}
+		echo button::create(['type'=>'button','label'=>$toggle_label,'icon'=>'','link'=>$toggle_url,'style'=>'margin-left: 15px;']);
+	}
 	if (!empty($e911_records)) {
 		echo "		<form method='get' action='' style='display: inline; margin-left: 15px;'>\n";
+		if ($show_domain_only) {
+			echo "			<input type='hidden' name='domain_filter' value='domain'>\n";
+		}
 		echo "			<input type='text' name='filter' class='txt list-search' placeholder='Filter results...' value='".escape($filter)."' style='width: 200px;'>\n";
 		echo "			<input type='submit' class='btn' value='Filter' style='margin-left: 5px;'>\n";
 		if (!empty($filter)) {
-			echo "			<a href='bulkvs_e911.php' class='btn' style='margin-left: 5px;'>Clear</a>\n";
+			$clear_url = 'bulkvs_e911.php';
+			if ($show_domain_only) {
+				$clear_url .= '?domain_filter=domain';
+			}
+			echo "			<a href='".$clear_url."' class='btn' style='margin-left: 5px;'>Clear</a>\n";
 		}
 		echo "		</form>\n";
 	}

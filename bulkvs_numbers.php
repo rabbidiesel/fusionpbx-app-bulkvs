@@ -30,7 +30,7 @@
 	require_once dirname(__DIR__, 2) . "/resources/paging.php";
 
 //check permissions
-	if (!permission_exists('bulkvs_view')) {
+	if (!permission_exists('bulkvs_view') && !permission_exists('bulkvs_numbers_domain') && !permission_exists('bulkvs_numbers_all')) {
 		echo "access denied";
 		exit;
 	}
@@ -422,6 +422,66 @@
 		// Ignore errors checking for changes
 	}
 
+//get domain filter parameter
+	$domain_filter = $_GET['domain_filter'] ?? '';
+	$show_domain_only = false;
+	
+	// Determine if we should show domain-only based on permissions and domain_filter parameter
+	if (permission_exists('bulkvs_numbers_all')) {
+		// User has "all" permission - check domain_filter parameter
+		if ($domain_filter === 'domain') {
+			$show_domain_only = true;
+		}
+	} elseif (permission_exists('bulkvs_numbers_domain')) {
+		// User only has domain permission - always show domain-only
+		$show_domain_only = true;
+	}
+
+//filter numbers by domain if needed
+	if ($show_domain_only && !empty($numbers)) {
+		if (!isset($database) || $database === null) {
+			$database = new database;
+		}
+		
+		// Get all destination numbers in current domain
+		$sql = "select distinct destination_number ";
+		$sql .= "from v_destinations ";
+		$sql .= "where domain_uuid = :domain_uuid ";
+		$sql .= "and destination_type = 'inbound' ";
+		$sql .= "and destination_enabled = 'true' ";
+		$parameters['domain_uuid'] = $domain_uuid;
+		$domain_destinations = $database->select($sql, $parameters, 'all');
+		unset($sql, $parameters);
+		
+		// Build set of 10-digit destination numbers
+		$destination_numbers = [];
+		foreach ($domain_destinations as $dest) {
+			$dest_number = $dest['destination_number'] ?? '';
+			if (!empty($dest_number)) {
+				$destination_numbers[$dest_number] = true;
+			}
+		}
+		
+		// Filter numbers to only include those with matching destinations
+		if (!empty($destination_numbers)) {
+			$filtered_numbers = [];
+			foreach ($numbers as $number) {
+				$tn = $number['TN'] ?? $number['tn'] ?? $number['telephoneNumber'] ?? '';
+				if (!empty($tn)) {
+					// Convert 11-digit to 10-digit (remove leading "1")
+					$tn_10 = preg_replace('/^1/', '', $tn);
+					if (strlen($tn_10) == 10 && isset($destination_numbers[$tn_10])) {
+						$filtered_numbers[] = $number;
+					}
+				}
+			}
+			$numbers = $filtered_numbers;
+		} else {
+			// No destinations found, clear numbers
+			$numbers = [];
+		}
+	}
+
 //create token (needed for disconnect action and modals)
 	$object = new token;
 	$token = $object->create($_SERVER['PHP_SELF']);
@@ -654,8 +714,11 @@
 	$num_rows = count($numbers);
 	$rows_per_page = $settings->get('domain', 'paging', 50);
 	$param = "";
+	if ($show_domain_only) {
+		$param = "&domain_filter=domain";
+	}
 	if (!empty($filter)) {
-		$param = "&filter=".urlencode($filter);
+		$param .= "&filter=".urlencode($filter);
 	}
 	if (!empty($order_by)) {
 		$param .= "&order_by=".urlencode($order_by);
@@ -663,10 +726,13 @@
 	if (!empty($order)) {
 		$param .= "&order=".urlencode($order);
 	}
-	// Build param for th_order_by (only filter, order_by/order will be added by th_order_by)
+	// Build param for th_order_by (only filter and domain_filter, order_by/order will be added by th_order_by)
 	$th_order_by_param = "";
+	if ($show_domain_only) {
+		$th_order_by_param = "&domain_filter=domain";
+	}
 	if (!empty($filter)) {
-		$th_order_by_param = "&filter=".urlencode($filter);
+		$th_order_by_param .= "&filter=".urlencode($filter);
 	}
 	if (!empty($_GET['page'])) {
 		$page = $_GET['page'];
@@ -726,12 +792,45 @@
 	if (permission_exists('bulkvs_search')) {
 		echo button::create(['type'=>'button','label'=>$text['title-bulkvs-search'],'icon'=>'search','link'=>'bulkvs_search.php']);
 	}
+	// Domain/All toggle button (only visible when bulkvs_numbers_all permission exists)
+	if (permission_exists('bulkvs_numbers_all')) {
+		$toggle_url = 'bulkvs_numbers.php';
+		$toggle_params = [];
+		if (!empty($filter)) {
+			$toggle_params[] = 'filter=' . urlencode($filter);
+		}
+		if (!empty($order_by)) {
+			$toggle_params[] = 'order_by=' . urlencode($order_by);
+		}
+		if (!empty($order)) {
+			$toggle_params[] = 'order=' . urlencode($order);
+		}
+		if ($show_domain_only) {
+			// Currently showing domain-only, so toggle to show all
+			$toggle_label = $text['button-show-all'];
+		} else {
+			// Currently showing all, so toggle to show domain-only
+			$toggle_params[] = 'domain_filter=domain';
+			$toggle_label = $text['button-show-domain'];
+		}
+		if (!empty($toggle_params)) {
+			$toggle_url .= '?' . implode('&', $toggle_params);
+		}
+		echo button::create(['type'=>'button','label'=>$toggle_label,'icon'=>'','link'=>$toggle_url,'style'=>'margin-left: 15px;']);
+	}
 	if (!empty($numbers)) {
 		echo "		<form method='get' action='' style='display: inline; margin-left: 15px;'>\n";
+		if ($show_domain_only) {
+			echo "			<input type='hidden' name='domain_filter' value='domain'>\n";
+		}
 		echo "			<input type='text' name='filter' class='txt list-search' placeholder='Filter results...' value='".escape($filter)."' style='width: 200px;'>\n";
 		echo "			<input type='submit' class='btn' value='Filter' style='margin-left: 5px;'>\n";
 		if (!empty($filter)) {
-			echo "			<a href='bulkvs_numbers.php' class='btn' style='margin-left: 5px;'>Clear</a>\n";
+			$clear_url = 'bulkvs_numbers.php';
+			if ($show_domain_only) {
+				$clear_url .= '?domain_filter=domain';
+			}
+			echo "			<a href='".$clear_url."' class='btn' style='margin-left: 5px;'>Clear</a>\n";
 		}
 		echo "		</form>\n";
 	}

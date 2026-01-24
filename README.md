@@ -7,21 +7,25 @@ A FusionPBX application that integrates with the BulkVS API to manage phone numb
 This app provides seamless integration between FusionPBX and BulkVS, allowing administrators to:
 
 - View all phone numbers in their BulkVS account filtered by trunk group
-- Update Portout PIN, LIDB/CNAM, SMS/MMS settings, and Notes for individual numbers
+- Filter numbers by domain (show all or current domain only)
+- Update Portout PIN, LIDB/CNAM, SMS/MMS settings, messaging campaigns, webhooks, and Notes for individual numbers
 - Search for available phone numbers by area code (NPA) or area code + exchange (NPANXX)
 - Purchase phone numbers and automatically create destinations in FusionPBX
 - View and manage E911 records for phone numbers
 - Edit E911 records with address validation
+- Automatically set destinations as Emergency type when E911 records are added
 
 ## Features
 
 - **Number Management**: View and manage all BulkVS numbers filtered by configured trunk group
   - Display status, activation date, rate center, tier, LIDB, notes, domain, and E911 information
+  - Toggle between showing all numbers (default) or only numbers from the current domain
   - Click on a number row to edit number details
   - Click on domain to edit the destination
   - Click on E911 record in the table to edit E911 information for that number
   - Access E911 management page via the E911 button in the action bar
-- **Number Editing**: Update LIDB/CNAM, Portout PIN, SMS/MMS settings, and Notes for individual numbers
+- **Number Editing**: Update LIDB/CNAM, Portout PIN, SMS/MMS settings, messaging campaigns, webhooks, and Notes for individual numbers
+  - Edit messaging campaigns (TCR) and webhooks (requires `bulkvs_messaging` permission)
 - **Number Search**: Search for available numbers by NPA (3-digit area code) or NPANXX (6-digit area code + exchange)
 - **Number Purchase**: Purchase numbers directly from the interface with automatic destination creation
   - Configure purchase settings: Domain, LIDB, Portout PIN, Reference ID
@@ -30,10 +34,14 @@ This app provides seamless integration between FusionPBX and BulkVS, allowing ad
 - **E911 Management**: View and manage E911 records
   - Access E911 management from the Numbers page action bar or directly from the menu
   - View E911 information in the numbers table
+  - Filter E911 records by domain (show all or current domain only)
   - Edit existing E911 records from the table or E911 page
   - Create new E911 records for any number
+  - Combined street address field (street number and name in one field)
   - Address validation before saving
   - SMS number configuration for E911 records
+  - Automatically sets FusionPBX destination as Emergency type when E911 is added
+  - Automatically removes Emergency type when E911 is deleted
 - **Server-Side Pagination**: Efficient pagination for large result sets
 - **Server-Side Filtering**: Filter all results, not just the current page
 - **Permission-Based Access**: Granular permissions for viewing, editing, searching, and purchasing
@@ -137,6 +145,9 @@ The app uses the following permissions:
 - **bulkvs_edit**: Edit number details and E911 records
 - **bulkvs_search**: Search for available numbers
 - **bulkvs_purchase**: Purchase numbers
+- **bulkvs_messaging**: Edit messaging campaigns and webhooks for numbers
+- **bulkvs_numbers_all**: View all numbers across all domains (default shows current domain only)
+- **bulkvs_e911_all**: View all E911 records across all domains (default shows current domain only)
 
 Assign these permissions to user groups as needed through **Advanced > Groups**.
 
@@ -146,11 +157,12 @@ Assign these permissions to user groups as needed through **Advanced > Groups**.
 
 1. Navigate to **Apps > BulkVS > Numbers**
 2. All numbers filtered by your configured trunk group will be displayed
-3. Use the filter box to search through numbers
-4. Click on a number row to edit its details
-5. Click on the domain to edit the destination
-6. Click on the E911 record in the table to edit E911 information for a specific number
-7. Use the **E911** button in the action bar (top left) to view and manage all E911 records
+3. Use the toggle button in the action bar to switch between showing all numbers (default) or only numbers from the current domain
+4. Use the filter box to search through numbers
+5. Click on a number row to edit its details
+6. Click on the domain to edit the destination
+7. Click on the E911 record in the table to edit E911 information for a specific number
+8. Use the **E911** button in the action bar (top left) to view and manage all E911 records
 
 ### Editing a Number
 
@@ -161,6 +173,8 @@ Assign these permissions to user groups as needed through **Advanced > Groups**.
    - **Notes**: Reference ID or notes
    - **SMS**: Enable/disable SMS
    - **MMS**: Enable/disable MMS
+   - **Campaign**: Select a messaging campaign (TCR) - only visible if you have `bulkvs_messaging` permission
+   - **Webhook**: Select a webhook - only visible if you have `bulkvs_messaging` permission
 3. Click **Save**
 
 ### Searching for Numbers
@@ -200,21 +214,23 @@ You can access E911 management in two ways:
 
 **From the E911 Page:**
 1. Navigate to **Apps > BulkVS > E911** (or click the E911 button from the Numbers page)
-2. View all E911 records or click on a record to edit it
+2. Use the toggle button in the action bar to switch between showing all E911 records (default) or only records for numbers in the current domain
+3. View all E911 records or click on a record to edit it
 
 **Editing/Creating E911 Records:**
 1. From either the Numbers page or E911 page, click on an E911 record (or "None" to create new)
 2. Fill in the E911 information:
    - **Caller Name**: Name associated with the E911 record
-   - **Street Number**: Street number
-   - **Street Name**: Street name
+   - **Street Address**: Street number and name combined (e.g., "123 Main St")
    - **Location**: Suite, unit, etc. (optional)
    - **City**: City name
    - **State**: State abbreviation (2 letters)
    - **Zip**: ZIP code
    - **SMS Numbers**: Comma-separated list of SMS numbers (optional)
-4. Click **Save**
-5. The address will be validated first, then the E911 record will be saved
+3. Click **Save**
+4. The address will be validated first, then the E911 record will be saved
+5. When an E911 record is saved, the corresponding FusionPBX destination will automatically be set as an Emergency type destination
+6. When an E911 record is deleted, the Emergency type will be removed from the destination
 
 ## File Structure
 
@@ -240,13 +256,15 @@ The `bulkvs_api` class provides methods for interacting with the BulkVS API:
 
 - `getNumbers($trunk_group)`: Retrieve numbers filtered by trunk group
 - `getNumber($tn)`: Get details for a specific number
-- `updateNumber($tn, $lidb, $portout_pin, $reference_id, $sms, $mms)`: Update number details
+- `updateNumber($tn, $lidb, $portout_pin, $reference_id, $sms, $mms, $tcr, $webhook)`: Update number details (including messaging campaign and webhook)
 - `searchNumbers($npa, $nxx)`: Search for available numbers
 - `purchaseNumber($tn, $trunk_group, $lidb, $portout_pin, $reference_id)`: Purchase a number
 - `getE911Records()`: Get all E911 records
 - `getE911Record($tn)`: Get E911 record for a specific number
 - `validateAddress($address_data)`: Validate an address and get AddressID
 - `saveE911Record($tn, $caller_name, $address_id, $sms)`: Save/update E911 record
+- `getWebhooks()`: Get list of available webhooks
+- `getCampaigns()`: Get list of available messaging campaigns
 
 ## Cache Client
 

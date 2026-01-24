@@ -81,6 +81,9 @@ $text['label-street-number']['en-gb'] = "Street Number";
 $text['label-street-name']['en-us'] = "Street Name";
 $text['label-street-name']['en-gb'] = "Street Name";
 
+$text['label-street-address']['en-us'] = "Street Address";
+$text['label-street-address']['en-gb'] = "Street Address";
+
 $text['label-location']['en-us'] = "Location";
 $text['label-location']['en-gb'] = "Location";
 

@@ -47,14 +47,28 @@
 //handle add mode (no TN provided)
 	$is_add_mode = empty($tn);
 	$caller_name = $_POST['caller_name'] ?? '';
-	$street_number = $_POST['street_number'] ?? '';
-	$street_name = $_POST['street_name'] ?? '';
+	$street_address = $_POST['street_address'] ?? '';
 	$location = $_POST['location'] ?? '';
 	$city = $_POST['city'] ?? '';
 	$state = $_POST['state'] ?? '';
 	$zip = $_POST['zip'] ?? '';
 	$sms_numbers = $_POST['sms_numbers'] ?? '';
 	$delete_action = $_POST['delete_action'] ?? $_GET['delete_action'] ?? '';
+	
+	// Split street address by first space to get street number and street name
+	$street_number = '';
+	$street_name = '';
+	if (!empty($street_address)) {
+		$street_address = trim($street_address);
+		$space_pos = strpos($street_address, ' ');
+		if ($space_pos !== false) {
+			$street_number = substr($street_address, 0, $space_pos);
+			$street_name = substr($street_address, $space_pos + 1);
+		} else {
+			// If no space found, treat entire string as street name
+			$street_name = $street_address;
+		}
+	}
 
 //process form submission
 	if (!empty($_POST['action']) && $_POST['action'] == 'save') {
@@ -245,13 +259,22 @@
 //set default values (use POST values if set, otherwise use current values)
 	if (empty($_POST['action']) || $_POST['action'] != 'save') {
 		$caller_name = $current_caller_name;
-		$street_number = $current_street_number;
-		$street_name = $current_street_name;
+		// Combine street number and street name for display
+		if (!empty($current_street_number) && !empty($current_street_name)) {
+			$street_address = $current_street_number . ' ' . $current_street_name;
+		} elseif (!empty($current_street_name)) {
+			$street_address = $current_street_name;
+		} else {
+			$street_address = '';
+		}
 		$location = $current_location;
 		$city = $current_city;
 		$state = $current_state;
 		$zip = $current_zip;
 		$sms_numbers = !empty($current_sms) ? implode(', ', $current_sms) : '';
+	} else {
+		// Use POST value for street_address (already set above)
+		$street_address = $_POST['street_address'] ?? '';
 	}
 
 //create token
@@ -307,23 +330,15 @@
 	echo "</td>\n";
 	echo "</tr>\n";
 
-	//Street Number
+	//Street Address (combined street number and street name)
 	echo "<tr>\n";
 	echo "<td class='vncell' valign='top' align='left' nowrap='nowrap'>\n";
-	echo "	".$text['label-street-number']."\n";
+	echo "	".$text['label-street-address']."\n";
 	echo "</td>\n";
 	echo "<td class='vtable' align='left'>\n";
-	echo "	<input type='text' class='formfld' name='street_number' value='".escape($street_number)."' maxlength='50'>\n";
-	echo "</td>\n";
-	echo "</tr>\n";
-
-	//Street Name
-	echo "<tr>\n";
-	echo "<td class='vncell' valign='top' align='left' nowrap='nowrap'>\n";
-	echo "	".$text['label-street-name']."\n";
-	echo "</td>\n";
-	echo "<td class='vtable' align='left'>\n";
-	echo "	<input type='text' class='formfld' name='street_name' value='".escape($street_name)."' maxlength='255'>\n";
+	echo "	<input type='text' class='formfld' name='street_address' value='".escape($street_address)."' maxlength='305' placeholder='123 Main St'>\n";
+	echo "	<br />\n";
+	echo "	<span style='font-size: 11px; color: #666;'>Street number and name (e.g., \"123 Main St\")</span>\n";
 	echo "</td>\n";
 	echo "</tr>\n";
 

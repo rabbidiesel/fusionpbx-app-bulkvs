@@ -167,6 +167,10 @@
 				$array['destinations'][0]['destination_context'] = 'public';
 				$array['destinations'][0]['destination_enabled'] = 'true';
 				$array['destinations'][0]['destination_description'] = !empty($purchase_reference_id) ? $purchase_reference_id : '';
+				// Set caller ID name to match LIDB if provided
+				if (!empty($purchase_lidb)) {
+					$array['destinations'][0]['destination_caller_id_name'] = $purchase_lidb;
+				}
 
 				// Initialize database if not already set
 				if (!isset($database) || $database === null) {

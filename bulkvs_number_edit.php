@@ -229,6 +229,33 @@
 			// Always pass SMS/MMS (not null) so API can update them
 			$bulkvs_api->updateNumber($tn, $lidb, $portout_pin, $notes, $sms, $mms, $tcr, $webhook);
 			
+			// Update destination caller ID name when LIDB is updated (including when cleared)
+			// Check if LIDB field was submitted (even if empty/null)
+			if (isset($_POST['lidb'])) {
+				try {
+					// Initialize database if not already set
+					if (!isset($database) || $database === null) {
+						$database = new database;
+					}
+					
+					// Convert TN to 10-digit format (remove leading "1")
+					$tn_10 = preg_replace('/^1/', '', preg_replace('/[^0-9]/', '', $tn));
+					
+					if (strlen($tn_10) == 10) {
+						// Direct database update - set caller ID name to match LIDB value
+						$lidb_value = ($lidb !== null) ? $lidb : '';
+						$sql = "update v_destinations set destination_caller_id_name = :destination_caller_id_name where destination_number = :destination_number and destination_type = 'inbound' and destination_enabled = 'true'";
+						$parameters['destination_caller_id_name'] = $lidb_value;
+						$parameters['destination_number'] = $tn_10;
+						$database->execute($sql, $parameters);
+						unset($sql, $parameters);
+					}
+				} catch (Exception $dest_e) {
+					// Log error but don't fail the whole update - API update was successful
+					error_log("BulkVS destination update error after LIDB update: " . $dest_e->getMessage());
+				}
+			}
+			
 			// Invalidate cache - trigger a sync to update the cached record
 			require_once "resources/classes/bulkvs_cache.php";
 			$cache = new bulkvs_cache($database, $settings);

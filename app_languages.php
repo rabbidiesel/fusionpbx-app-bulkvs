@@ -215,11 +215,11 @@ $text['button-submit']['en-gb'] = "Submit";
 $text['message-lrn-error']['en-us'] = "Error performing LRN lookup";
 $text['message-lrn-error']['en-gb'] = "Error performing LRN lookup";
 
-$text['button-show-all']['en-us'] = "All";
-$text['button-show-all']['en-gb'] = "All";
+$text['button-show-all']['en-us'] = "Show All";
+$text['button-show-all']['en-gb'] = "Show All";
 
-$text['button-show-domain']['en-us'] = "Domain";
-$text['button-show-domain']['en-gb'] = "Domain";
+$text['button-show-domain']['en-us'] = "Show Domain";
+$text['button-show-domain']['en-gb'] = "Show Domain";
 
 ?>
 

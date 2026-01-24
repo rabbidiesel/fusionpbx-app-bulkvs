@@ -208,9 +208,11 @@ class bulkvs_api {
 	 * @param string $reference_id Notes/ReferenceID (optional)
 	 * @param bool $sms SMS enabled (optional)
 	 * @param bool $mms MMS enabled (optional)
+	 * @param string $tcr Campaign/TCR (optional)
+	 * @param string $webhook Webhook name (optional)
 	 * @return array Response data
 	 */
-	public function updateNumber($tn, $lidb = null, $portout_pin = null, $reference_id = null, $sms = null, $mms = null) {
+	public function updateNumber($tn, $lidb = null, $portout_pin = null, $reference_id = null, $sms = null, $mms = null, $tcr = null, $webhook = null) {
 		$data = ['TN' => $tn];
 		
 		if ($lidb !== null) {
@@ -227,6 +229,12 @@ class bulkvs_api {
 		}
 		if ($mms !== null) {
 			$data['Mms'] = $mms ? true : false;
+		}
+		if ($tcr !== null) {
+			$data['Tcr'] = $tcr;
+		}
+		if ($webhook !== null) {
+			$data['Webhook'] = $webhook;
 		}
 		
 		return $this->request('POST', '/tnRecord', $data);
@@ -368,6 +376,22 @@ class bulkvs_api {
 	 */
 	public function deleteE911Record($tn) {
 		return $this->request('DELETE', '/e911Record', ['Number' => $tn]);
+	}
+
+	/**
+	 * Get list of webhooks
+	 * @return array Array of webhook records
+	 */
+	public function getWebhooks() {
+		return $this->request('GET', '/webHooks', []);
+	}
+
+	/**
+	 * Get list of campaigns
+	 * @return array Array of campaign records
+	 */
+	public function getCampaigns() {
+		return $this->request('GET', '/campaigns', []);
 	}
 }
 

@@ -113,6 +113,9 @@
 		$y++;
 		$apps[$x]['permissions'][$y]['name'] = "bulkvs_numbers_all";
 		$apps[$x]['permissions'][$y]['groups'][] = "superadmin";
+		$y++;
+		$apps[$x]['permissions'][$y]['name'] = "bulkvs_messaging";
+		$apps[$x]['permissions'][$y]['groups'][] = "superadmin";
 
 	//schema details - Numbers cache table
 		$y=0;

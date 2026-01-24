@@ -51,6 +51,15 @@ $text['label-sms']['en-gb'] = "SMS";
 $text['label-mms']['en-us'] = "MMS";
 $text['label-mms']['en-gb'] = "MMS";
 
+$text['label-campaign']['en-us'] = "Campaign";
+$text['label-campaign']['en-gb'] = "Campaign";
+
+$text['label-webhook']['en-us'] = "Webhook";
+$text['label-webhook']['en-gb'] = "Webhook";
+
+$text['label-none']['en-us'] = "None";
+$text['label-none']['en-gb'] = "None";
+
 $text['label-enabled']['en-us'] = "Enabled";
 $text['label-enabled']['en-gb'] = "Enabled";
 

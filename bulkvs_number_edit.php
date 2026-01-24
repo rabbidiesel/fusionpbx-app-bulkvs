@@ -48,6 +48,8 @@
 	$notes = $_POST['notes'] ?? '';
 	$sms = isset($_POST['sms']) && $_POST['sms'] == '1' ? true : false;
 	$mms = isset($_POST['mms']) && $_POST['mms'] == '1' ? true : false;
+	$tcr = $_POST['tcr'] ?? '';
+	$webhook = $_POST['webhook'] ?? '';
 	$park_tn = $_POST['park_tn'] ?? $_GET['park_tn'] ?? '';
 	$action = $_POST['action'] ?? $_GET['action'] ?? '';
 
@@ -213,12 +215,19 @@
 		// Always send SMS/MMS values (true/false) when form is submitted so we can enable/disable them
 		$sms = isset($_POST['sms']) && $_POST['sms'] == '1';
 		$mms = isset($_POST['mms']) && $_POST['mms'] == '1';
+		// Only process campaign/webhook if user has permission
+		$tcr = null;
+		$webhook = null;
+		if (permission_exists('bulkvs_messaging')) {
+			$tcr = isset($_POST['tcr']) && $_POST['tcr'] !== '' ? $_POST['tcr'] : null;
+			$webhook = isset($_POST['webhook']) && $_POST['webhook'] !== '' ? $_POST['webhook'] : null;
+		}
 
 		try {
 			require_once "resources/classes/bulkvs_api.php";
 			$bulkvs_api = new bulkvs_api($settings);
 			// Always pass SMS/MMS (not null) so API can update them
-			$bulkvs_api->updateNumber($tn, $lidb, $portout_pin, $notes, $sms, $mms);
+			$bulkvs_api->updateNumber($tn, $lidb, $portout_pin, $notes, $sms, $mms, $tcr, $webhook);
 			
 			// Invalidate cache - trigger a sync to update the cached record
 			require_once "resources/classes/bulkvs_cache.php";
@@ -246,6 +255,8 @@
 	$current_notes = '';
 	$current_sms = false;
 	$current_mms = false;
+	$current_tcr = '';
+	$current_webhook = '';
 	if (!empty($tn)) {
 		try {
 			require_once "resources/classes/bulkvs_api.php";
@@ -265,6 +276,8 @@
 				$messaging = $number['Messaging'];
 				$current_sms = isset($messaging['Sms']) ? (bool)$messaging['Sms'] : false;
 				$current_mms = isset($messaging['Mms']) ? (bool)$messaging['Mms'] : false;
+				$current_tcr = $messaging['Tcr'] ?? $messaging['tcr'] ?? '';
+				$current_webhook = $messaging['Webhook'] ?? $messaging['webhook'] ?? '';
 			}
 		} catch (Exception $e) {
 			message::add($text['message-api-error'] . ': ' . $e->getMessage(), 'negative');
@@ -283,6 +296,33 @@
 		$notes = $current_notes;
 		$sms = $current_sms;
 		$mms = $current_mms;
+		$tcr = $current_tcr;
+		$webhook = $current_webhook;
+	}
+
+//fetch webhooks and campaigns for dropdowns (only if user has permission)
+	$webhooks = [];
+	$campaigns = [];
+	$has_messaging_permission = permission_exists('bulkvs_messaging');
+	if ($has_messaging_permission) {
+		try {
+			require_once "resources/classes/bulkvs_api.php";
+			$bulkvs_api = new bulkvs_api($settings);
+			$webhooks = $bulkvs_api->getWebhooks();
+			$campaigns = $bulkvs_api->getCampaigns();
+			// Ensure arrays are returned
+			if (!is_array($webhooks)) {
+				$webhooks = [];
+			}
+			if (!is_array($campaigns)) {
+				$campaigns = [];
+			}
+		} catch (Exception $e) {
+			// Log error but don't block the page
+			error_log("BulkVS Error fetching webhooks/campaigns: " . $e->getMessage());
+			$webhooks = [];
+			$campaigns = [];
+		}
 	}
 
 //create token
@@ -379,6 +419,58 @@
 	echo "	</select>\n";
 	echo "</td>\n";
 	echo "</tr>\n";
+
+	//Campaign (only show if user has messaging permission)
+	if ($has_messaging_permission) {
+		echo "<tr>\n";
+		echo "<td class='vncell' valign='top' align='left' nowrap='nowrap'>\n";
+		echo "	".$text['label-campaign']."\n";
+		echo "</td>\n";
+		echo "<td class='vtable' align='left'>\n";
+		echo "	<select class='formfld' name='tcr'>\n";
+		echo "		<option value=''>".$text['label-none']."</option>\n";
+		foreach ($campaigns as $campaign) {
+			$campaign_tcr = $campaign['Tcr'] ?? $campaign['tcr'] ?? '';
+			$campaign_brand = $campaign['Brand'] ?? $campaign['brand'] ?? '';
+			if (!empty($campaign_tcr)) {
+				$selected = ($tcr == $campaign_tcr) ? " selected" : "";
+				$display = $campaign_tcr;
+				if (!empty($campaign_brand)) {
+					$display .= " - " . escape($campaign_brand);
+				}
+				echo "		<option value='".escape($campaign_tcr)."'".$selected.">".escape($display)."</option>\n";
+			}
+		}
+		echo "	</select>\n";
+		echo "</td>\n";
+		echo "</tr>\n";
+	}
+
+	//Webhook (only show if user has messaging permission)
+	if ($has_messaging_permission) {
+		echo "<tr>\n";
+		echo "<td class='vncell' valign='top' align='left' nowrap='nowrap'>\n";
+		echo "	".$text['label-webhook']."\n";
+		echo "</td>\n";
+		echo "<td class='vtable' align='left'>\n";
+		echo "	<select class='formfld' name='webhook'>\n";
+		echo "		<option value=''>".$text['label-none']."</option>\n";
+		foreach ($webhooks as $webhook_item) {
+			$webhook_name = $webhook_item['Webhook'] ?? $webhook_item['webhook'] ?? '';
+			$webhook_desc = $webhook_item['Description'] ?? $webhook_item['description'] ?? '';
+			if (!empty($webhook_name)) {
+				$selected = ($webhook == $webhook_name) ? " selected" : "";
+				$display = escape($webhook_name);
+				if (!empty($webhook_desc)) {
+					$display .= " - " . escape($webhook_desc);
+				}
+				echo "		<option value='".escape($webhook_name)."'".$selected.">".$display."</option>\n";
+			}
+		}
+		echo "	</select>\n";
+		echo "</td>\n";
+		echo "</tr>\n";
+	}
 
 	echo "</table>\n";
 	echo "</div>\n";
